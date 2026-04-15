@@ -1,0 +1,107 @@
+Tests für Barcode Erkennung:
+in Python 3.11 Anaconda Env 
+Erklärung: Zxing hat lokal nicht funktioniert, deshalb Zxing online funktion für  QRcode Erkennung.
+Versuch mit Pyzbar: nach viel Bearbeitung der Vorverarbeitung kein QR code erkannt. 
+Versuch mit OpenCV QRCodeDetector: Vorverarbeitung hat immer Bild unscharf gemacht.
+Versuch mit Zxing,Pyzbar, OpenCV nacheinander: nach Fehlschlag von Erkennung von Zxing sollen andere Funktionen versuchen den Code zu erkennen. Hat bisher keinen erfolg gehabt, wäre aber fur mehr Robustheit gut.
+ 
+CODE mit Zxing:
+______________________________________________________________________________________________
+import sys
+import cv2
+import numpy as np
+import pickle
+import requests
+import re
+import os
+
+def parse_gs1(text):
+    print("\n📦 GS1 Parsing:")
+    matches = re.findall(r'\((\d{2})\)([^\(]+)', text)
+    if not matches:
+        print("⚠️ Kein GS1-Muster erkannt. Rohdaten:")
+        print(text)
+    for ai, val in matches:
+        beschreibung = {
+            "01": "GTIN (Artikelnummer)",
+            "10": "Chargennummer",
+            "17": "Haltbarkeitsdatum",
+            "21": "Seriennummer",
+        }.get(ai, "Unbekannter AI")
+        print(f"  ({ai}) {beschreibung}: {val}")
+
+def zxing_online_decode(image_array):
+    _, buffer = cv2.imencode(".png", image_array)
+    files = {"f": ("image.png", buffer.tobytes(), "image/png")}
+    response = requests.post("https://zxing.org/w/decode", files=files)
+    if response.ok:
+        html = response.text
+        start = html.find("<pre>") + 5
+        end = html.find("</pre>")
+        if start != -1 and end != -1:
+            inhalt = html[start:end].strip()
+            cleaned = ''.join(c for c in inhalt if ord(c) >= 32)
+            return cleaned
+    return None
+
+def rotate_image(image, angle):
+    (h, w) = image.shape[:2]
+    center = (w // 2, h // 2)
+    matrix = cv2.getRotationMatrix2D(center, angle, 1.0)
+    return cv2.warpAffine(image, matrix, (w, h), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
+
+def winkel_schleife_decode(bild):
+    print("🔁 Starte Winkelschleife von –10° bis +10° (Schritt: 1°)...")
+    for winkel in range(-10, 11):  # -10 bis +10 inkl.
+        gedreht = rotate_image(bild, winkel)
+        cv2.imshow(f"🔄 {winkel}°", gedreht)
+        cv2.waitKey(500)
+        cv2.destroyAllWindows()
+
+        inhalt = zxing_online_decode(gedreht)
+        if inhalt:
+            print(f"\n✅ Erkannt bei {winkel}°:\n{inhalt}")
+            parse_gs1(inhalt)
+            return True
+
+    print("❌ Kein QR-Code erkannt nach Winkelschleife.")
+    return False
+
+def main():
+    if len(sys.argv) < 2:
+        print("⚠️ Kein Bildobjekt übergeben.")
+        return
+
+    pfad = sys.argv[1]
+    if not os.path.exists(pfad):
+        print("❌ Übergabeobjekt nicht gefunden.")
+        return
+
+    with open(pfad, "rb") as f:
+        bild = pickle.load(f)
+
+    cv2.imshow("📥 Ursprungsbild", bild)
+    cv2.waitKey(500)
+    cv2.destroyAllWindows()
+
+    print("📡 Versuche ZXing direkt...")
+    inhalt = zxing_online_decode(bild)
+
+    if inhalt:
+        print("✅ ZXing-Erkennung erfolgreich:")
+        print(inhalt)
+        parse_gs1(inhalt)
+    else:
+        print("⚠️ Kein Erfolg – starte kontrollierte Winkelschleife...")
+        winkel_schleife_decode(bild)
+
+if __name__ == "__main__":
+    main()
+
+______________________________________________________________________________________________
+
+Test Visual Studio Code
+
+Grund: Python hat Probleme mit der richtigen instalation von Packages
+
+Hat bisher keine Verbesserung an der QRcode Funktion gezeigt
